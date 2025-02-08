@@ -1,1 +1,0 @@
-# trading-view-clone

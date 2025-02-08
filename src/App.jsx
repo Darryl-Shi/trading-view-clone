@@ -1,235 +1,333 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { createChart } from 'lightweight-charts';
-import { fetchMarketData } from './services/api';
+import React, { useState, useEffect, useRef } from 'react';
+import { createChart, CrosshairMode } from 'lightweight-charts';
+import axios from 'axios';
+
+const DEFAULT_INDICATORS = [
+  { name: 'SMA', enabled: false, params: { period: 20 }, plotSeparately: false },
+  { name: 'EMA', enabled: false, params: { period: 50 }, plotSeparately: false },
+  { name: 'RSI', enabled: false, params: { period: 14 }, plotSeparately: false },
+  { name: 'BB', enabled: false, params: { period: 20, stdDev: 2 }, plotSeparately: false },
+];
+
+const TIME_INTERVALS = ['1m', '5m', '15m', '30m', '1h', '1d', '1wk', '1mo'];
 
 function App() {
-  const chartContainerRef = useRef(null);
-  const chartRef = useRef(null);
-  const seriesRef = useRef(null);
-  const [selectedInterval, setSelectedInterval] = useState('1d');
-  const [selectedSymbol, setSelectedSymbol] = useState('');
-  const [inputSymbol, setInputSymbol] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [chartType, setChartType] = useState('candlestick');
-  // Add just these two new states
-  const [showIndicators, setShowIndicators] = useState(false);
-  const [indicatorCode, setIndicatorCode] = useState('');
+  const [ticker, setTicker] = useState('AAPL');
+  const [data, setData] = useState([]);
+  const [indicators, setIndicators] = useState(() => {
+    const savedIndicators = localStorage.getItem('indicators');
+    return savedIndicators ? JSON.parse(savedIndicators) : DEFAULT_INDICATORS;
+  });
+  const [customIndicator, setCustomIndicator] = useState('');
+  const [customIndicatorName, setCustomIndicatorName] = useState('');
+  const [timeInterval, setTimeInterval] = useState('1d');
+  const [error, setError] = useState('');
+  const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
+  const chartsContainerRef = useRef();
+  const chartsRef = useRef([]);
 
-  const intervals = [
-    { value: '1m', label: '1M' },
-    { value: '5m', label: '5M' },
-    { value: '15m', label: '15M' },
-    { value: '30m', label: '30M' },
-    { value: '60m', label: '1H' },
-    { value: '1d', label: '1D' },
-    { value: '1wk', label: '1W' },
-    { value: '1mo', label: '1M' },
-  ];
+  useEffect(() => {
+    fetchData();
+  }, [ticker, timeInterval]);
 
-  const handleSymbolSubmit = (e) => {
-    e.preventDefault();
-    if (inputSymbol) {
-      setSelectedSymbol(inputSymbol.toUpperCase());
-      setInputSymbol('');
+  useEffect(() => {
+    if (data.length > 0) {
+      createCharts();
+    }
+  }, [data, indicators]);
+
+  useEffect(() => {
+    localStorage.setItem('indicators', JSON.stringify(indicators));
+  }, [indicators]);
+
+  const fetchData = async () => {
+    try {
+      const response = await axios.get(`http://localhost:5000/data/${ticker}?interval=${timeInterval}`);
+      setData(response.data.data);
+      updateIndicators(response.data.indicators);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+      setError('Failed to fetch data. Please try again.');
     }
   };
 
-  useEffect(() => {
-    if (!chartContainerRef.current) return;
+  const updateIndicators = (newIndicatorData) => {
+    setIndicators(indicators.map(indicator => {
+      const newData = newIndicatorData.find(i => i.name === indicator.name);
+      return { ...indicator, data: newData ? newData.data : [] };
+    }));
+  };
 
-    const chart = createChart(chartContainerRef.current, {
-      width: chartContainerRef.current.clientWidth,
-      height: 600,
-      layout: {
-        background: { color: '#131722' },
-        textColor: '#d1d4dc',
-      },
-      grid: {
-        vertLines: { color: '#1e222d' },
-        horzLines: { color: '#1e222d' },
-      },
-      timeScale: {
-        timeVisible: true,
-        secondsVisible: false,
-      },
+  const createCharts = () => {
+    while (chartsContainerRef.current.firstChild) {
+      chartsContainerRef.current.firstChild.remove();
+    }
+    chartsRef.current = [];
+
+    const mainChartContainer = document.createElement('div');
+    mainChartContainer.style.width = '100%';
+    mainChartContainer.style.height = '400px';
+    chartsContainerRef.current.appendChild(mainChartContainer);
+
+    const mainChart = createChart(mainChartContainer, getChartOptions());
+
+    const candlestickSeries = mainChart.addCandlestickSeries({
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderVisible: false,
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+    });
+    candlestickSeries.setData(data);
+
+    chartsRef.current.push(mainChart);
+
+    indicators.forEach((indicator, index) => {
+      if (indicator.enabled && indicator.data) {
+        if (!indicator.plotSeparately) {
+          addIndicatorToChart(mainChart, indicator);
+        } else {
+          createSeparateChart(indicator, index);
+        }
+      }
     });
 
-    chartRef.current = chart;
+    synchronizeCharts();
+  };
 
-    const handleResize = () => {
-      chart.applyOptions({
-        width: chartContainerRef.current.clientWidth,
+  const getChartOptions = () => ({
+    width: chartsContainerRef.current.clientWidth,
+    height: 400,
+    layout: {
+      background: { type: 'solid', color: '#1e222d' },
+      textColor: '#d1d4dc',
+    },
+    grid: {
+      vertLines: { color: '#2b2b43' },
+      horzLines: { color: '#2b2b43' },
+    },
+    crosshair: {
+      mode: CrosshairMode.Normal,
+    },
+    timeScale: {
+      borderColor: '#485c7b',
+      timeVisible: isTimeVisible(),
+      secondsVisible: isSecondsVisible(),
+      rightOffset: 12,
+      barSpacing: 3,
+      fixLeftEdge: true,
+      lockVisibleTimeRangeOnResize: true,
+      rightBarStaysOnScroll: true,
+      borderVisible: false,
+      visible: true,
+      tickMarkFormatter: (time, tickMarkType, locale) => {
+        const date = new Date(time * 1000);
+        const formatOptions = isSecondsVisible()
+          ? { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }
+          : isTimeVisible()
+          ? { hour: '2-digit', minute: '2-digit', hour12: false }
+          : { month: 'short', day: 'numeric' };
+        return date.toLocaleString(locale, formatOptions);
+      },
+    },
+  });
+
+  const isTimeVisible = () => {
+    return ['1m', '5m', '15m', '30m', '1h'].includes(timeInterval);
+  };
+
+  const isSecondsVisible = () => {
+    return ['1m', '5m'].includes(timeInterval);
+  };
+
+  const addIndicatorToChart = (chart, indicator) => {
+    if (typeof indicator.data === 'object' && !Array.isArray(indicator.data)) {
+      Object.entries(indicator.data).forEach(([key, values]) => {
+        const indicatorSeries = chart.addLineSeries({ color: getRandomColor() });
+        indicatorSeries.setData(values);
       });
-    };
+    } else if (Array.isArray(indicator.data)) {
+      const indicatorSeries = chart.addLineSeries({ color: indicator.color || getRandomColor() });
+      indicatorSeries.setData(indicator.data);
+    }
+  };
 
-    window.addEventListener('resize', handleResize);
+  const createSeparateChart = (indicator, index) => {
+    const containerDiv = document.createElement('div');
+    containerDiv.style.width = '100%';
+    containerDiv.style.height = '200px';
+    containerDiv.style.marginTop = '20px';
+    chartsContainerRef.current.appendChild(containerDiv);
 
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-    };
-  }, []);
+    const chart = createChart(containerDiv, {
+      ...getChartOptions(),
+      height: 200,
+    });
 
-  useEffect(() => {
-    const fetchData = async () => {
-      if (!selectedSymbol) return;
-      
-      setIsLoading(true);
-      setError(null);
-      
-      try {
-        const data = await fetchMarketData(selectedSymbol, selectedInterval);
-        if (data && data.length > 0) {
-          if (seriesRef.current) {
-            chartRef.current.removeSeries(seriesRef.current);
+    addIndicatorToChart(chart, indicator);
+    chartsRef.current.push(chart);
+  };
+
+  const synchronizeCharts = () => {
+    chartsRef.current.forEach((chart, index) => {
+      chart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
+        chartsRef.current.forEach((otherChart, otherIndex) => {
+          if (index !== otherIndex) {
+            otherChart.timeScale().setVisibleRange(timeRange);
           }
+        });
+      });
 
-          let series;
-          if (chartType === 'line') {
-            series = chartRef.current.addLineSeries({
-              color: '#2962FF',
-              lineWidth: 2,
-            });
-            const lineData = data.map(item => ({
-              time: item.time,
-              value: item.close
-            }));
-            series.setData(lineData);
-          } else if (chartType === 'area') {
-            series = chartRef.current.addAreaSeries({
-              lineColor: '#2962FF',
-              topColor: '#2962FF50',
-              bottomColor: '#2962FF10',
-            });
-            const areaData = data.map(item => ({
-              time: item.time,
-              value: item.close
-            }));
-            series.setData(areaData);
-          } else {
-            series = chartRef.current.addCandlestickSeries({
-              upColor: '#26a69a',
-              downColor: '#ef5350',
-              borderVisible: false,
-              wickUpColor: '#26a69a',
-              wickDownColor: '#ef5350',
-            });
-            series.setData(data);
+      chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
+        chartsRef.current.forEach((otherChart, otherIndex) => {
+          if (index !== otherIndex) {
+            otherChart.timeScale().setVisibleLogicalRange(logicalRange);
           }
-          seriesRef.current = series;
-        } else {
-          setError('No data available for this symbol/interval');
-        }
-      } catch (error) {
-        console.error('Error fetching data:', error);
-        setError('Failed to fetch market data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+        });
+      });
 
-    fetchData();
-  }, [selectedSymbol, selectedInterval, chartType]);
+      chart.subscribeCrosshairMove((param) => {
+        chartsRef.current.forEach((otherChart, otherIndex) => {
+          if (index !== otherIndex) {
+            otherChart.setCrosshairPosition(param.point.x, param.point.y, param.seriesPrices);
+          }
+        });
+      });
+    });
+  };
+
+  const handleTickerChange = (e) => {
+    setTicker(e.target.value.toUpperCase());
+  };
+
+  const handleCustomIndicatorSubmit = async () => {
+    try {
+      setError('');
+      const response = await axios.post('http://localhost:5000/custom_indicator', {
+        ticker,
+        code: customIndicator,
+        interval: timeInterval,
+        name: customIndicatorName,
+      });
+      setIndicators([...indicators, { ...response.data, enabled: true, plotSeparately: false }]);
+      setCustomIndicator('');
+      setCustomIndicatorName('');
+    } catch (error) {
+      console.error('Error submitting custom indicator:', error);
+      setError(error.response?.data?.error || 'An error occurred while submitting the custom indicator');
+    }
+  };
+
+  const toggleIndicator = (index) => {
+    const newIndicators = [...indicators];
+    newIndicators[index].enabled = !newIndicators[index].enabled;
+    setIndicators(newIndicators);
+  };
+
+  const togglePlotSeparately = (index) => {
+    const newIndicators = [...indicators];
+    newIndicators[index].plotSeparately = !newIndicators[index].plotSeparately;
+    setIndicators(newIndicators);
+  };
+
+  const deleteIndicator = (index) => {
+    const newIndicators = indicators.filter((_, i) => i !== index);
+    setIndicators(newIndicators);
+  };
+
+  const updateIndicatorParams = async (index, paramName, value) => {
+    const newIndicators = [...indicators];
+    newIndicators[index].params[paramName] = value;
+    setIndicators(newIndicators);
+    
+    try {
+      const response = await axios.get(`http://localhost:5000/indicator/${ticker}`, {
+        params: {
+          name: newIndicators[index].name,
+          ...newIndicators[index].params,
+          interval: timeInterval,
+        },
+      });
+      updateIndicators([response.data]);
+    } catch (error) {
+      console.error('Error updating indicator:', error);
+      setError('Failed to update indicator. Please try again.');
+    }
+  };
+
+  const getRandomColor = () => {
+    return '#' + Math.floor(Math.random()*16777215).toString(16);
+  };
 
   return (
     <div className="container">
       <header className="header">
-        <div className="header-content">
-          <h1>TradingView Clone</h1>
-          {selectedSymbol && (
-            <div className="active-symbol">
-              <span className="label">Active Symbol:</span>
-              <span className="symbol">{selectedSymbol}</span>
-            </div>
-          )}
-        </div>
-      </header>
-
-      <div className="toolbar">
-        <form onSubmit={handleSymbolSubmit} className="symbol-form">
+        <h1>TradingView Clone</h1>
+        <div className="input-group">
           <input
             type="text"
-            value={inputSymbol}
-            onChange={(e) => setInputSymbol(e.target.value)}
-            placeholder="Enter ticker symbol (e.g., AAPL)"
-            className="symbol-input"
+            value={ticker}
+            onChange={handleTickerChange}
+            placeholder="Enter ticker symbol"
           />
-          <button type="submit" className="symbol-button">Load Chart</button>
-        </form>
-
-        <div className="chart-controls">
-          <select
-            value={chartType}
-            onChange={(e) => setChartType(e.target.value)}
-            className="chart-type-select"
-          >
-            <option value="candlestick">Candlestick</option>
-            <option value="line">Line</option>
-            <option value="area">Area</option>
+          <select value={timeInterval} onChange={(e) => setTimeInterval(e.target.value)}>
+            {TIME_INTERVALS.map((interval) => (
+              <option key={interval} value={interval}>{interval}</option>
+            ))}
           </select>
-
-          {/* Add indicator button */}
-          <button
-            onClick={() => setShowIndicators(!showIndicators)}
-            className="chart-control-btn"
-          >
-            Indicators
-          </button>
+          <button onClick={fetchData}>Fetch Data</button>
+          <button onClick={() => setShowIndicatorMenu(!showIndicatorMenu)}>Indicators</button>
         </div>
-
-        <div className="interval-buttons">
-          {intervals.map(({ value, label }) => (
-            <button
-              key={value}
-              onClick={() => setSelectedInterval(value)}
-              className={`interval-btn ${selectedInterval === value ? 'active' : ''}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+      </header>
+      <div className="main-content">
+        <div className="charts-container" ref={chartsContainerRef}></div>
+        {showIndicatorMenu && (
+          <div className="indicator-menu">
+            <h2>Indicators</h2>
+            <div className="indicator-list">
+              {indicators.map((indicator, index) => (
+                <div key={index} className="indicator-item">
+                  <input
+                    type="checkbox"
+                    checked={indicator.enabled}
+                    onChange={() => toggleIndicator(index)}
+                  />
+                  <label>{indicator.name}</label>
+                  {indicator.params && Object.entries(indicator.params).map(([paramName, paramValue]) => (
+                    <input
+                      key={paramName}
+                      type="number"
+                      value={paramValue}
+                      onChange={(e) => updateIndicatorParams(index, paramName, parseInt(e.target.value))}
+                      style={{ width: '50px', marginLeft: '5px' }}
+                    />
+                  ))}
+                  <button onClick={() => togglePlotSeparately(index)}>
+                    {indicator.plotSeparately ? 'Plot with Main' : 'Plot Separately'}
+                  </button>
+                  <button onClick={() => deleteIndicator(index)}>Delete</button>
+                </div>
+              ))}
+            </div>
+            <div className="custom-indicator">
+              <h3>Custom Indicator</h3>
+              <input
+                type="text"
+                value={customIndicatorName}
+                onChange={(e) => setCustomIndicatorName(e.target.value)}
+                placeholder="Indicator Name"
+              />
+              <textarea
+                value={customIndicator}
+                onChange={(e) => setCustomIndicator(e.target.value)}
+                placeholder="Enter custom indicator code"
+              />
+              <button onClick={handleCustomIndicatorSubmit}>Add Custom Indicator</button>
+            </div>
+          </div>
+        )}
       </div>
-
-      {/* Add indicator panel */}
-      {showIndicators && (
-        <div className="indicator-panel">
-          <textarea
-            value={indicatorCode}
-            onChange={(e) => setIndicatorCode(e.target.value)}
-            className="indicator-input"
-            placeholder={`# Example Python indicator code:
-def calculate(df):
-    """
-    df: DataFrame with columns ['Open', 'High', 'Low', 'Close', 'Volume']
-    Return a pandas Series or DataFrame
-    """
-    # Example: 20-day moving average
-    return df['Close'].rolling(window=20).mean()`}
-          />
-          <button className="indicator-add-btn">Add Indicator</button>
-        </div>
-      )}
-      
-      {!selectedSymbol && !isLoading && !error && (
-        <div className="welcome-message">
-          Enter a ticker symbol above to begin
-        </div>
-      )}
-      
-      {isLoading && (
-        <div className="loading-overlay">
-          <div className="loading-spinner"></div>
-        </div>
-      )}
-      
-      {error && (
-        <div className="error-message">
-          {error}
-        </div>
-      )}
-      
-      <div ref={chartContainerRef} className="chart-container" />
+      {error && <p className="error">{error}</p>}
     </div>
   );
 }
