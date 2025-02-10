@@ -10,13 +10,14 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 
 def get_period_for_interval(interval):
     if interval in ['1m', '5m', '15m', '30m']:
-        return "7d"
+        return "1wk"
     elif interval in ['1h', '1d']:
-        return "60d"
+        return "6mo"
     elif interval == '1wk':
-        return "500d"
+        return "2y"
     else:  # '1mo'
-        return "5y"
+        return "max"
+    # return "max"
 
 def fetch_stock_data(ticker, interval):
     stock = yf.Ticker(ticker)
@@ -162,4 +163,4 @@ def custom_indicator():
         return jsonify({'error': str(e)}), 400
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', debug=True)
