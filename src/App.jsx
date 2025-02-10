@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { createChart, CrosshairMode } from 'lightweight-charts';
+import { createChart } from 'lightweight-charts';
 import axios from 'axios';
 
 const DEFAULT_INDICATORS = [
@@ -12,7 +12,7 @@ const DEFAULT_INDICATORS = [
 const TIME_INTERVALS = ['1m', '5m', '15m', '30m', '1h', '1d', '1wk', '1mo'];
 
 function App() {
-  const [ticker, setTicker] = useState('AAPL');
+  const [ticker, setTicker] = useState('SPX');
   const [data, setData] = useState([]);
   const [indicators, setIndicators] = useState(() => {
     const savedIndicators = localStorage.getItem('indicators');
@@ -23,8 +23,8 @@ function App() {
   const [timeInterval, setTimeInterval] = useState('1d');
   const [error, setError] = useState('');
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
-  const chartsContainerRef = useRef();
-  const chartsRef = useRef([]);
+  const chartContainerRef = useRef();
+  const chartRef = useRef();
 
   useEffect(() => {
     fetchData();
@@ -32,7 +32,7 @@ function App() {
 
   useEffect(() => {
     if (data.length > 0) {
-      createCharts();
+      createOrUpdateChart();
     }
   }, [data, indicators]);
 
@@ -58,20 +58,36 @@ function App() {
     }));
   };
 
-  const createCharts = () => {
-    while (chartsContainerRef.current.firstChild) {
-      chartsContainerRef.current.firstChild.remove();
+  const createOrUpdateChart = () => {
+    if (chartRef.current) {
+      chartRef.current.remove();
     }
-    chartsRef.current = [];
 
-    const mainChartContainer = document.createElement('div');
-    mainChartContainer.style.width = '100%';
-    mainChartContainer.style.height = '400px';
-    chartsContainerRef.current.appendChild(mainChartContainer);
+    const chart = createChart(chartContainerRef.current, {
+      width: chartContainerRef.current.clientWidth,
+      height: chartContainerRef.current.clientHeight,
+      layout: {
+        background: { type: 'solid', color: '#131722' },
+        textColor: '#d1d4dc',
+      },
+      grid: {
+        vertLines: { color: '#2a2e39' },
+        horzLines: { color: '#2a2e39' },
+      },
+      crosshair: {
+        mode: 1,
+      },
+      rightPriceScale: {
+        borderColor: '#2a2e39',
+      },
+      timeScale: {
+        borderColor: '#2a2e39',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+    });
 
-    const mainChart = createChart(mainChartContainer, getChartOptions());
-
-    const candlestickSeries = mainChart.addCandlestickSeries({
+    const candlestickSeries = chart.addCandlestickSeries({
       upColor: '#26a69a',
       downColor: '#ef5350',
       borderVisible: false,
@@ -80,64 +96,13 @@ function App() {
     });
     candlestickSeries.setData(data);
 
-    chartsRef.current.push(mainChart);
-
-    indicators.forEach((indicator, index) => {
+    indicators.forEach(indicator => {
       if (indicator.enabled && indicator.data) {
-        if (!indicator.plotSeparately) {
-          addIndicatorToChart(mainChart, indicator);
-        } else {
-          createSeparateChart(indicator, index);
-        }
+        addIndicatorToChart(chart, indicator);
       }
     });
 
-    synchronizeCharts();
-  };
-
-  const getChartOptions = () => ({
-    width: chartsContainerRef.current.clientWidth,
-    height: 400,
-    layout: {
-      background: { type: 'solid', color: '#1e222d' },
-      textColor: '#d1d4dc',
-    },
-    grid: {
-      vertLines: { color: '#2b2b43' },
-      horzLines: { color: '#2b2b43' },
-    },
-    crosshair: {
-      mode: CrosshairMode.Normal,
-    },
-    timeScale: {
-      borderColor: '#485c7b',
-      timeVisible: isTimeVisible(),
-      secondsVisible: isSecondsVisible(),
-      rightOffset: 12,
-      barSpacing: 3,
-      fixLeftEdge: true,
-      lockVisibleTimeRangeOnResize: true,
-      rightBarStaysOnScroll: true,
-      borderVisible: false,
-      visible: true,
-      tickMarkFormatter: (time, tickMarkType, locale) => {
-        const date = new Date(time * 1000);
-        const formatOptions = isSecondsVisible()
-          ? { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }
-          : isTimeVisible()
-          ? { hour: '2-digit', minute: '2-digit', hour12: false }
-          : { month: 'short', day: 'numeric' };
-        return date.toLocaleString(locale, formatOptions);
-      },
-    },
-  });
-
-  const isTimeVisible = () => {
-    return ['1m', '5m', '15m', '30m', '1h'].includes(timeInterval);
-  };
-
-  const isSecondsVisible = () => {
-    return ['1m', '5m'].includes(timeInterval);
+    chartRef.current = chart;
   };
 
   const addIndicatorToChart = (chart, indicator) => {
@@ -150,50 +115,6 @@ function App() {
       const indicatorSeries = chart.addLineSeries({ color: indicator.color || getRandomColor() });
       indicatorSeries.setData(indicator.data);
     }
-  };
-
-  const createSeparateChart = (indicator, index) => {
-    const containerDiv = document.createElement('div');
-    containerDiv.style.width = '100%';
-    containerDiv.style.height = '200px';
-    containerDiv.style.marginTop = '20px';
-    chartsContainerRef.current.appendChild(containerDiv);
-
-    const chart = createChart(containerDiv, {
-      ...getChartOptions(),
-      height: 200,
-    });
-
-    addIndicatorToChart(chart, indicator);
-    chartsRef.current.push(chart);
-  };
-
-  const synchronizeCharts = () => {
-    chartsRef.current.forEach((chart, index) => {
-      chart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
-        chartsRef.current.forEach((otherChart, otherIndex) => {
-          if (index !== otherIndex) {
-            otherChart.timeScale().setVisibleRange(timeRange);
-          }
-        });
-      });
-
-      chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
-        chartsRef.current.forEach((otherChart, otherIndex) => {
-          if (index !== otherIndex) {
-            otherChart.timeScale().setVisibleLogicalRange(logicalRange);
-          }
-        });
-      });
-
-      chart.subscribeCrosshairMove((param) => {
-        chartsRef.current.forEach((otherChart, otherIndex) => {
-          if (index !== otherIndex) {
-            otherChart.setCrosshairPosition(param.point.x, param.point.y, param.seriesPrices);
-          }
-        });
-      });
-    });
   };
 
   const handleTickerChange = (e) => {
@@ -224,17 +145,6 @@ function App() {
     setIndicators(newIndicators);
   };
 
-  const togglePlotSeparately = (index) => {
-    const newIndicators = [...indicators];
-    newIndicators[index].plotSeparately = !newIndicators[index].plotSeparately;
-    setIndicators(newIndicators);
-  };
-
-  const deleteIndicator = (index) => {
-    const newIndicators = indicators.filter((_, i) => i !== index);
-    setIndicators(newIndicators);
-  };
-
   const updateIndicatorParams = async (index, paramName, value) => {
     const newIndicators = [...indicators];
     newIndicators[index].params[paramName] = value;
@@ -262,25 +172,49 @@ function App() {
   return (
     <div className="container">
       <header className="header">
-        <h1>TradingView Clone</h1>
-        <div className="input-group">
+        <div className="logo">TradingView Clone</div>
+        <div className="search-bar">
           <input
             type="text"
             value={ticker}
             onChange={handleTickerChange}
-            placeholder="Enter ticker symbol"
+            placeholder="Enter symbol..."
           />
-          <select value={timeInterval} onChange={(e) => setTimeInterval(e.target.value)}>
+        </div>
+        <div className="header-buttons">
+          <button className="header-button" onClick={() => setShowIndicatorMenu(!showIndicatorMenu)}>Indicators</button>
+          <select value={timeInterval} onChange={(e) => setTimeInterval(e.target.value)} className="header-button">
             {TIME_INTERVALS.map((interval) => (
               <option key={interval} value={interval}>{interval}</option>
             ))}
           </select>
-          <button onClick={fetchData}>Fetch Data</button>
-          <button onClick={() => setShowIndicatorMenu(!showIndicatorMenu)}>Indicators</button>
         </div>
       </header>
       <div className="main-content">
-        <div className="charts-container" ref={chartsContainerRef}></div>
+        <div className="chart-container" ref={chartContainerRef}></div>
+        <div className="sidebar">
+          <div className="watchlist">
+            <div className="watchlist-header">
+              <h3>Watchlist</h3>
+              <button>+</button>
+            </div>
+            <div className="watchlist-item">
+              <span className="symbol">SPX</span>
+              <span className="price">6,025.98</span>
+              <span className="change negative">-0.95%</span>
+            </div>
+            <div className="watchlist-item">
+              <span className="symbol">NDQ</span>
+              <span className="price">21,491.37</span>
+              <span className="change negative">-1.30%</span>
+            </div>
+            <div className="watchlist-item">
+              <span className="symbol">DJI</span>
+              <span className="price">44,303.40</span>
+              <span className="change negative">-0.99%</span>
+            </div>
+          </div>
+        </div>
         {showIndicatorMenu && (
           <div className="indicator-menu">
             <h2>Indicators</h2>
@@ -302,10 +236,6 @@ function App() {
                       style={{ width: '50px', marginLeft: '5px' }}
                     />
                   ))}
-                  <button onClick={() => togglePlotSeparately(index)}>
-                    {indicator.plotSeparately ? 'Plot with Main' : 'Plot Separately'}
-                  </button>
-                  <button onClick={() => deleteIndicator(index)}>Delete</button>
                 </div>
               ))}
             </div>
