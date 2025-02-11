@@ -192,29 +192,7 @@ function App() {
       </header>
       <div className="main-content">
         <div className="chart-container" ref={chartContainerRef}></div>
-        <div className="sidebar">
-          <div className="watchlist">
-            <div className="watchlist-header">
-              <h3>Watchlist</h3>
-              <button>+</button>
-            </div>
-            <div className="watchlist-item">
-              <span className="symbol">SPX</span>
-              <span className="price">6,025.98</span>
-              <span className="change negative">-0.95%</span>
-            </div>
-            <div className="watchlist-item">
-              <span className="symbol">NDQ</span>
-              <span className="price">21,491.37</span>
-              <span className="change negative">-1.30%</span>
-            </div>
-            <div className="watchlist-item">
-              <span className="symbol">DJI</span>
-              <span className="price">44,303.40</span>
-              <span className="change negative">-0.99%</span>
-            </div>
-          </div>
-        </div>
+
         {showIndicatorMenu && (
           <div className="indicator-menu">
             <h2>Indicators</h2>
